@@ -1,0 +1,67 @@
+{
+  "header": {
+    "name": "Princess Gonzalodo",
+    "location": "San Francisco Bay Area, CA",
+    "email": "libbygonzalodo@gmail.com",
+    "linkedin": "linkedin.com/in/princess-gonzalodo-488a362b3"
+  },
+
+  "summary": "Revenue Operations Specialist with a foundation in full-cycle accounting and an M.S. in Business Analytics (SFSU, in progress). Promoted internally at Bishop-Wisecarver from Staff Accountant to Revenue Operations Specialist after two years of cross-functional ownership across AR, AP, and payroll. HubSpot certified in Revenue Operations and Sales Software. Brings an analytical, process-first approach to GTM operations, CRM administration, and data-informed decision-making.",
+
+  "experience": [
+    {
+      "company": "Bishop-Wisecarver",
+      "company_description": "Women-owned manufacturer of industrial motion components, Pittsburg, CA",
+      "title": "Revenue Operations Specialist",
+      "start": "February 2026",
+      "end": "Present",
+      "bullets": [
+        "Administer HubSpot CRM as certified RevOps Specialist, supporting pipeline visibility and GTM data integrity across sales and marketing functions",
+        "Apply Python to automate revenue reporting and support data-informed operational decisions",
+        "Earned HubSpot Revenue Operations and Sales Software certifications upon transitioning into role",
+        "Collaborate cross-functionally to align financial operations with go-to-market strategy and revenue targets",
+        "Design and implement process improvements to streamline revenue workflows and reduce friction across the sales cycle"
+      ]
+    },
+    {
+      "company": "Bishop-Wisecarver",
+      "company_description": "Women-owned manufacturer of industrial motion components, Pittsburg, CA",
+      "title": "Staff Accountant",
+      "start": "November 2023",
+      "end": "February 2026",
+      "bullets": [
+        "Managed full-cycle Accounts Receivable — invoicing, cash application, collections, credit review, and reconciliations",
+        "Oversaw full-cycle Accounts Payable — invoice processing, coding, approvals, payment runs, and vendor management",
+        "Administered weekly and bi-weekly payroll for the organization via ADP, ensuring compliance with federal and state wage, deduction, and benefits regulations",
+        "Performed monthly account reconciliations and supported month-end close processes",
+        "Maintained financial data integrity across AR, AP, and payroll functions simultaneously"
+      ]
+    }
+  ],
+
+  "education": [
+    {
+      "institution": "San Francisco State University",
+      "degree": "M.S. Business Analytics",
+      "status": "In Progress"
+    }
+  ],
+
+  "certifications": [
+    {
+      "name": "HubSpot Revenue Operations Certification",
+      "year": "2026"
+    },
+    {
+      "name": "HubSpot Sales Software Certification",
+      "year": "2026"
+    }
+  ],
+
+  "skills": {
+    "revops_crm": ["HubSpot", "CRM administration", "pipeline management", "GTM operations", "revenue reporting", "sales enablement"],
+    "analytics_programming": ["Python", "data analysis", "business analysis", "KPI reporting", "revenue metrics"],
+    "accounting_finance": ["full-cycle AR", "full-cycle AP", "payroll administration", "ADP", "account reconciliation", "month-end close"],
+    "soft_skills": ["cross-functional collaboration", "process design", "workflow optimization", "data-driven communication"]
+  }
+}
