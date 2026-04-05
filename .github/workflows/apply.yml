@@ -1,0 +1,53 @@
+name: LinkedIn Job Applications
+
+on:
+  schedule:
+    # 9am, 1pm, 5pm Pacific Time (UTC-7 PDT) — runs Mon–Fri
+    - cron: '0 16 * * 1-5'   # 9:00 AM PT
+    - cron: '0 20 * * 1-5'   # 1:00 PM PT
+    - cron: '0 0 * * 2-6'    # 5:00 PM PT (next UTC day)
+  workflow_dispatch:          # also allows manual trigger from GitHub UI
+
+jobs:
+  apply-to-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Run LinkedIn job application bot
+        env:
+          LINKEDIN_EMAIL: ${{ secrets.LINKEDIN_EMAIL }}
+          LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RUN_TARGET: "50"    # applications per run (3 runs = 150/day)
+        run: python src/main.py
+
+      - name: Commit updated application log
+        run: |
+          git config user.name "linkedin-bot"
+          git config user.email "bot@github.com"
+          git add data/applied_jobs.json data/pipeline.md
+          git diff --cached --quiet || git commit -m "📋 Auto-log: $(date +'%Y-%m-%d %H:%M PT') applications"
+          git push
