@@ -1,7 +1,7 @@
 """
 LinkedIn Login Handler using Playwright with stealth settings.
 Supports cookie-based auth (li_at) for GitHub Actions runs where
-datacenter IPs trigger LinkedIn CAPTCHA on password login.
+datacenter IPs trigger LinkedIn's CAPTCHA/checkpoint on password login.
 """
 
 import os
@@ -9,6 +9,11 @@ import time
 import random
 import logging
 from playwright.sync_api import sync_playwright, BrowserContext, Page
+try:
+    from playwright_stealth import stealth_sync
+    STEALTH_AVAILABLE = True
+except ImportError:
+    STEALTH_AVAILABLE = False
 
 log = logging.getLogger(__name__)
 
@@ -64,13 +69,25 @@ class LinkedInLogin:
             locale="en-US",
             timezone_id="America/Los_Angeles",
         )
+        # Mask Playwright fingerprint
         context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
             Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
             window.chrome = { runtime: {} };
         """)
+        self._context = context
         return context
+
+    def _new_stealth_page(self):
+        """Create a new page with playwright-stealth applied if available."""
+        page = self._context.new_page()
+        if STEALTH_AVAILABLE:
+            stealth_sync(page)
+            log.info("playwright-stealth applied to page.")
+        else:
+            log.warning("playwright-stealth not installed — running without stealth patches.")
+        return page
 
     def login(self, email: str = None, password: str = None) -> Page | None:
         """
@@ -92,18 +109,20 @@ class LinkedInLogin:
     def _cookie_login(self, li_at: str) -> Page | None:
         """
         Login using the li_at session cookie.
-        Pattern: warm-up visit to get bcookie/bscookie -> inject li_at -> /feed/
-        The warm-up prevents ERR_TOO_MANY_REDIRECTS when injecting li_at cold.
+        Pattern: warm-up visit -> inject li_at -> navigate to /feed/
+        The warm-up visit establishes bcookie/bscookie first so injecting
+        li_at doesn't cause a redirect loop.
         """
         context = self._make_context()
-        self._context = context
-        self._page = context.new_page()
+        self._page = self._new_stealth_page()
 
         try:
+            # Step 1: warm-up -- lets LinkedIn set bcookie / bscookie
             log.info("Warm-up: visiting linkedin.com homepage...")
             self._page.goto("https://www.linkedin.com/", wait_until="domcontentloaded", timeout=60000)
             time.sleep(random.uniform(1.5, 2.5))
 
+            # Step 2: inject li_at session cookie
             context.add_cookies([{
                 "name": "li_at",
                 "value": li_at,
@@ -114,15 +133,16 @@ class LinkedInLogin:
             }])
             log.info("li_at cookie injected.")
 
+            # Step 3: navigate to feed
             try:
                 self._page.goto(
                     "https://www.linkedin.com/feed/",
-                    wait_until="domcontentloaded",
+                    wait_until="networkidle",
                     timeout=60000,
                 )
             except Exception as nav_err:
                 if "ERR_TOO_MANY_REDIRECTS" in str(nav_err):
-                    log.error("Cookie rejected - redirect loop. Cookie may be expired.")
+                    log.error("Cookie rejected -- redirect loop. Cookie may be expired.")
                     log.error("Get a fresh li_at cookie from browser DevTools and update the LINKEDIN_COOKIE secret.")
                     return None
                 raise
@@ -130,15 +150,19 @@ class LinkedInLogin:
             time.sleep(random.uniform(3.0, 5.0))
 
             url = self._page.url
+            body_len = self._page.evaluate("() => document.body?.innerText?.length || 0")
+            log.info(f"Feed page body_len={body_len}, url={url}")
+
             if any(k in url for k in ["feed", "jobs", "mynetwork", "messaging"]):
                 log.info(f"Cookie login successful. URL: {url}")
                 return self._page
             elif any(k in url for k in ["login", "checkpoint", "challenge"]):
-                log.error(f"Cookie rejected - landed on: {url}")
-                log.error("Update LINKEDIN_COOKIE secret with a fresh value from browser DevTools.")
+                log.error(f"Cookie rejected -- landed on: {url}")
+                log.error("Cookie may be expired. Update LINKEDIN_COOKIE secret with a fresh value.")
                 return None
             else:
-                log.info(f"Cookie login - URL: {url} (treating as success)")
+                # Could be any LinkedIn page -- treat as success
+                log.info(f"Cookie login -- URL: {url} (treating as success)")
                 return self._page
 
         except Exception as e:
@@ -148,11 +172,11 @@ class LinkedInLogin:
     def _password_login(self, email: str, password: str) -> Page | None:
         """
         Fallback: email + password login.
-        NOTE: Triggers CAPTCHA from GitHub Actions IPs. Use cookie auth instead.
+        NOTE: This often triggers a CAPTCHA/checkpoint when running from
+        GitHub Actions datacenter IPs. Use cookie auth instead.
         """
         context = self._make_context()
-        self._context = context
-        self._page = context.new_page()
+        self._page = self._new_stealth_page()
 
         try:
             self._page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded", timeout=60000)
@@ -160,6 +184,7 @@ class LinkedInLogin:
 
             self._page.fill("#username", email)
             time.sleep(random.uniform(0.5, 1.2))
+
             self._page.click("#password")
             time.sleep(random.uniform(0.3, 0.8))
             self._page.fill("#password", password)
@@ -174,10 +199,10 @@ class LinkedInLogin:
                 log.info(f"Password login successful. URL: {current_url}")
                 return self._page
             elif any(k in current_url for k in ["checkpoint", "challenge"]):
-                log.error("Security challenge detected - use cookie auth instead.")
+                log.error("LinkedIn security challenge detected -- use cookie auth instead.")
                 return None
             elif "login" in current_url:
-                log.error("Still on login page - credentials may be wrong.")
+                log.error("Still on login page -- credentials may be wrong.")
                 return None
             else:
                 log.info(f"Password login likely successful. URL: {current_url}")
