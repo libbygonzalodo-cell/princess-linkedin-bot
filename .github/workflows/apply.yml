@@ -40,8 +40,9 @@ jobs:
         env:
           LINKEDIN_EMAIL: ${{ secrets.LINKEDIN_EMAIL }}
           LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+          LINKEDIN_COOKIE: ${{ secrets.LINKEDIN_COOKIE }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          RUN_TARGET: "50"    # applications per run (3 runs = 150/day)
+          RUN_TARGET: "50"
         run: python src/main.py
 
       - name: Commit updated application log
