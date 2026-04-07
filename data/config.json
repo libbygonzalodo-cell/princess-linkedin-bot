@@ -6,7 +6,6 @@
     "location": "San Francisco Bay Area, CA",
     "linkedin": "https://www.linkedin.com/in/princess-gonzalodo-488a362b3/"
   },
-
   "job_search": {
     "titles": [
       "Revenue Operations Analyst",
@@ -28,29 +27,20 @@
       "Go-To-Market Operations"
     ],
     "locations": [
+      "San Francisco Bay Area, CA",
       "San Francisco, CA",
       "Oakland, CA",
-      "Berkeley, CA",
-      "Walnut Creek, CA",
-      "Concord, CA",
-      "Pleasanton, CA",
-      "Livermore, CA",
-      "Vallejo, CA",
-      "Fairfield, CA",
-      "Vacaville, CA",
       "Remote"
     ],
     "remote_preference": "strong",
-    "location_priority": ["Remote", "Hybrid Bay Area", "Hybrid East Bay", "Hybrid Solano", "On-site Bay Area"],
+    "location_priority": ["Remote", "Hybrid Bay Area", "On-site Bay Area"],
     "experience_levels": ["Entry level", "Associate", "Mid-Senior level"],
     "job_types": ["Full-time"],
     "easy_apply_only": true,
-    "date_posted": "past_24_hours",
-
+    "date_posted": "past_week",
     "salary_minimum_usd": 100000,
     "salary_keywords": ["100k", "110k", "120k", "130k", "$100", "$110", "$120", "$130", "100,000", "110,000", "120,000"]
   },
-
   "application_limits": {
     "max_per_run": 50,
     "max_per_day": 150,
@@ -58,7 +48,6 @@
     "max_delay_between_apps_sec": 120,
     "cooldown_same_company_days": 30
   },
-
   "skip_rules": {
     "skip_if_requires_clearance": true,
     "skip_if_requires_years_gt": 7,
@@ -69,7 +58,6 @@
     ],
     "skip_companies_on_cooldown": true
   },
-
   "resume_tailoring": {
     "enabled": true,
     "model": "claude-3-5-haiku-20241022",
