@@ -1,9 +1,8 @@
 """
-LinkedIn Job Searcher - v6
-Anti-detection strategy using 3 layers:
-  1. Direct /jobs/search/ URL (works once session is warm — LinkedIn allows internal nav)
-  2. /feed/ keyboard '/' shortcut (bypasses CSS selector issues; includes page diagnostics)
-  3. Voyager API via page.evaluate(fetch()) — same-origin XHR, bypasses ALL IP blocks
+LinkedIn Job Searcher - v7
+Anti-detection strategy using 2 layers:
+  1. /feed/ keyboard '/' shortcut (bypasses CSS selector issues; includes page diagnostics)
+  2. Voyager API via page.evaluate(fetch()) -- same-origin XHR, bypasses ALL IP blocks
 """
 
 import time
@@ -24,90 +23,42 @@ class JobSearcher:
         self._on_feed = False  # track so we don't reload /feed/ every single search
 
     def search(self, title: str, location: str, max_results: int = 25) -> list[dict]:
-        """Search LinkedIn for Easy Apply jobs. Tries 3 strategies in order."""
-
-        # --- Strategy 1: Direct URL navigation ---
-        # Once li_at is set and we've visited /feed/, LinkedIn often allows
-        # navigating to /jobs/search/ without redirect loops (organic Referer).
-        jobs = self._strategy_direct_url(title, location, max_results)
-        if jobs is not None:
-            return jobs
-
-        # --- Strategy 2: /feed/ global search bar via keyboard shortcut ---
-        # Press '/' to focus the global search, type, Enter, then click Jobs filter.
-        # Also logs page diagnostics so we can see what LinkedIn is serving us.
+        """Search LinkedIn for Easy Apply jobs.
+        Strategy 1: /feed/ search bar via keyboard shortcut (requires page to render)
+        Strategy 2: Voyager API same-origin XHR (bypasses all IP-level blocks)
+        """
+        # --- Strategy 1: /feed/ global search bar ---
         jobs = self._strategy_keyboard_search(title, location, max_results)
         if jobs is not None:
             return jobs
 
-        # --- Strategy 3: Voyager API via same-origin fetch() ---
-        # Makes XHR from within linkedin.com page context — session cookies flow
-        # automatically, completely bypasses IP-level navigation blocks.
+        # --- Strategy 2: Voyager API via same-origin fetch() ---
         jobs = self._strategy_voyager_api(title, location, max_results)
         if jobs is not None:
             return jobs
 
-        log.warning(f"All 3 strategies failed for '{title}' in '{location}'")
+        log.warning(f"Both strategies failed for '{title}' in '{location}'")
         return []
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Strategy 1 — Direct URL
-    # ─────────────────────────────────────────────────────────────────────────
-    def _strategy_direct_url(self, title: str, location: str, max_results: int):
-        """Navigate directly to /jobs/search/ URL. Returns list or None if failed."""
-        try:
-            url = (
-                "https://www.linkedin.com/jobs/search/?"
-                f"keywords={urllib.parse.quote(title)}"
-                f"&location={urllib.parse.quote(location)}"
-                "&f_LF=f_AL"   # Easy Apply filter
-                "&sortBy=DD"   # Date descending
-            )
-            log.info(f"[S1] Direct URL: {url[:100]}")
-            self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            time.sleep(random.uniform(2.5, 4.0))
-
-            current = self.page.url
-            log.info(f"[S1] Landed on: {current}")
-
-            if any(k in current for k in ["login", "checkpoint", "challenge"]):
-                log.warning("[S1] Redirected to auth wall — strategy 1 failed")
-                return None
-
-            if "ERR_TOO_MANY_REDIRECTS" in current:
-                return None
-
-            # We're on a jobs page — collect cards
-            if any(k in current for k in ["jobs", "search"]):
-                log.info("[S1] Jobs page loaded — collecting cards")
-                return self._collect_cards(max_results)
-
-            return None
-
-        except Exception as e:
-            if "ERR_TOO_MANY_REDIRECTS" in str(e):
-                log.warning("[S1] Redirect loop — trying next strategy")
-            else:
-                log.warning(f"[S1] Error: {e}")
-            return None
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Strategy 2 — /feed/ keyboard shortcut
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
+    # Strategy 1 -- /feed/ keyboard shortcut
+    # -------------------------------------------------------------------------
     def _strategy_keyboard_search(self, title: str, location: str, max_results: int):
         """Use '/' keyboard shortcut to focus LinkedIn global search on /feed/."""
         try:
-            # Only navigate to /feed/ if we're not already there
             cur = self.page.url
-            if "feed" not in cur:
-                log.info("[S2] Navigating to /feed/...")
+            # Navigate to /feed/ if we're not already on a rendered LinkedIn page
+            body_len = self.page.evaluate("() => document.body?.innerText?.length || 0")
+            if "linkedin.com" not in cur or body_len < 50:
+                log.info(f"[S1] Navigating to /feed/ (cur={cur[:60]}, body_len={body_len})")
                 self.page.goto("https://www.linkedin.com/feed/",
-                               wait_until="domcontentloaded", timeout=30000)
-                time.sleep(random.uniform(6.0, 9.0))
+                               wait_until="networkidle", timeout=45000)
+                time.sleep(random.uniform(3.0, 5.0))
             else:
-                time.sleep(random.uniform(2.0, 3.0))
+                log.info(f"[S1] Already on rendered LinkedIn page (body_len={body_len})")
+                time.sleep(random.uniform(1.0, 2.0))
 
-            # Diagnostics: see what LinkedIn is actually serving
+            # -- Diagnostics: see what LinkedIn is actually serving --
             diag = self.page.evaluate("""() => ({
                 title: document.title,
                 url: location.href,
@@ -122,7 +73,7 @@ class JobSearcher:
             log.info(f"[S2] Inputs found: {diag.get('inputs')}")
             log.info(f"[S2] Body preview: {diag.get('bodyText', '')[:150]}")
 
-            # Try '/' keyboard shortcut
+            # -- Try '/' keyboard shortcut --
             self.page.keyboard.press("/")
             time.sleep(random.uniform(0.5, 1.0))
 
@@ -136,8 +87,8 @@ class JobSearcher:
             log.info(f"[S2] Active element after '/': {active}")
 
             if "INPUT" not in active.upper():
-                # '/' didn't focus a search box — try clicking first visible input
-                log.info("[S2] '/' didn't focus an input — trying JS click on search bar")
+                # '/' didn't focus a search box -- try clicking first visible input
+                log.info("[S2] '/' didn't focus an input -- trying JS click on search bar")
                 clicked = self.page.evaluate("""() => {
                     const inputs = Array.from(document.querySelectorAll('input'));
                     const visible = inputs.find(i => i.offsetParent !== null);
@@ -146,7 +97,7 @@ class JobSearcher:
                 }""")
                 time.sleep(0.5)
                 if not clicked:
-                    log.warning("[S2] No visible input found — strategy 2 failed")
+                    log.warning("[S2] No visible input found -- strategy 1 failed")
                     return None
 
             # Type the search query
@@ -179,7 +130,7 @@ class JobSearcher:
 
             current = self.page.url
             if any(k in current for k in ["login", "checkpoint"]):
-                log.warning("[S2] Session expired — strategy 2 failed")
+                log.warning("[S2] Session expired -- strategy 1 failed")
                 return None
 
             return self._collect_cards(max_results)
@@ -188,14 +139,14 @@ class JobSearcher:
             log.warning(f"[S2] Error: {e}")
             return None
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Strategy 3 — Voyager API (same-origin XHR)
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
+    # Strategy 2 -- Voyager API (same-origin XHR)
+    # -------------------------------------------------------------------------
     def _strategy_voyager_api(self, title: str, location: str, max_results: int):
         """
         Call LinkedIn's internal Voyager search API via fetch() from page context.
         Since the call is made FROM linkedin.com, cookies flow automatically and
-        LinkedIn's IP-level navigation blocks do not apply (it's an XHR, not a page load).
+        LinkedIn's IP-level navigation blocks don't apply (it's an XHR, not a page load).
         """
         try:
             log.info(f"[S3] Voyager API search: '{title}' in '{location}'")
@@ -209,20 +160,36 @@ class JobSearcher:
 
             result = self.page.evaluate(f"""
                 async () => {{
-                    // Extract CSRF token from JSESSIONID cookie
-                    const match = document.cookie.match(/JSESSIONID="([^"]+)"/);
-                    const csrf = match ? decodeURIComponent(match[1]) : '';
+                    // CSRF extraction -- LinkedIn puts it in JSESSIONID cookie (not httpOnly)
+                    // or in window globals set by the SPA.
+                    let csrf = '';
+                    const cookieMatch = document.cookie.match(/JSESSIONID="?([^";]+)"?/);
+                    if (cookieMatch) {{
+                        csrf = decodeURIComponent(cookieMatch[1]);
+                    }}
+                    if (!csrf && window.voyager && window.voyager.csrfToken) {{
+                        csrf = window.voyager.csrfToken;
+                    }}
+                    if (!csrf) {{
+                        // Try any cookie that starts with "ajax:"
+                        const ajaxMatch = document.cookie.match(/ajax%3A(\\d+)/);
+                        if (ajaxMatch) csrf = 'ajax:' + ajaxMatch[1];
+                    }}
+
+                    const debug = {{
+                        csrf: csrf ? csrf.slice(0, 25) : 'EMPTY',
+                        allCookieKeys: document.cookie.split(';').map(c => c.trim().split('=')[0]),
+                        bodyLen: document.body?.innerText?.length || 0,
+                    }};
 
                     const params = new URLSearchParams({{
                         q: 'all',
                         keywords: {repr(title)},
-                        locationUnion: 'urn:li:fs_region:(us,0)',
                         origin: 'JOB_SEARCH_PAGE_KEYWORD_HISTORY',
                         start: '0',
                         count: '25',
                     }});
                     params.append('filters', 'List(resultType->JOBS,easyApply->true)');
-
                     const url = '/voyager/api/search/blended?' + params.toString();
 
                     try {{
@@ -238,17 +205,17 @@ class JobSearcher:
                             }},
                         }});
                         const text = await resp.text();
-                        return {{ status: resp.status, ok: resp.ok, body: text.slice(0, 8000) }};
+                        return {{ status: resp.status, ok: resp.ok, body: text.slice(0, 8000), debug: debug }};
                     }} catch(e) {{
-                        return {{ status: 0, ok: false, body: e.message }};
+                        return {{ status: 0, ok: false, body: e.message, debug: debug }};
                     }}
                 }}
             """)
 
-            log.info(f"[S3] Voyager response status: {result.get('status')}")
+            log.info(f"[S3] Voyager status: {result.get('status')} | debug: {result.get('debug')}")
 
             if not result.get('ok'):
-                log.warning(f"[S3] Voyager API failed: {result.get('body', '')[:200]}")
+                log.warning(f"[S3] Voyager failed: {result.get('body', '')[:300]}")
                 return None
 
             import json
@@ -284,6 +251,7 @@ class JobSearcher:
                 # ComplexOnsiteApply = Easy Apply; OffsiteApply = external
                 if "OffsiteApply" in apply_type:
                     continue
+                # If no applyMethod or ComplexOnsiteApply, treat as potential Easy Apply
 
                 urn = item.get("entityUrn", "")
                 job_id = urn.split(":")[-1] if urn else ""
@@ -317,9 +285,9 @@ class JobSearcher:
             log.warning(f"[S3] Voyager parse error: {e}")
         return jobs
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Shared card collection (used by Strategy 1 & 2)
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
+    # Shared card collection (used by Strategy 1)
+    # -------------------------------------------------------------------------
     def _collect_cards(self, max_results: int) -> list[dict]:
         """Scroll and collect job cards from current search results page."""
         jobs = []
@@ -329,6 +297,7 @@ class JobSearcher:
                 self.page.evaluate("window.scrollBy(0, 700)")
                 time.sleep(random.uniform(0.7, 1.3))
 
+            # Try multiple card selectors
             job_cards = []
             for selector in [
                 "[data-job-id]",
@@ -459,7 +428,7 @@ class JobSearcher:
 
         for skip_title in self.skip_cfg.get("skip_titles_containing", []):
             if skip_title.lower() in title:
-                log.debug(f"Skipping '{job['title']}' — filter: {skip_title}")
+                log.debug(f"Skipping '{job['title']}' -- filter: {skip_title}")
                 return False
 
         if not job.get("job_id"):
