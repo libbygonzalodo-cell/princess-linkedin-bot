@@ -1,9 +1,9 @@
 """
-LinkedIn Job Searcher - v9
-Uses Python requests library with direct HTTP session establishment.
-Reads li_at from env, makes real HTTP requests to LinkedIn to get
-a fresh authenticated JSESSIONID, then calls Voyager API.
-Also includes public jobs API fallback (no auth needed).
+LinkedIn Job Searcher - v10
+Fixes two broken regex patterns in _parse_public_jobs_html:
+  - (\d+) not (d+) for job ID extraction
+  - [\s\S]*? not [sS]*? for company name extraction
+Adds href-based and data-job-id fallbacks for job ID extraction.
 """
 
 import os
@@ -67,7 +67,7 @@ class JobSearcher:
 
             time.sleep(random.uniform(1.5, 3.0))
 
-            # Step 2: GET /feed/ with li_at — LinkedIn issues an authenticated JSESSIONID
+            # Step 2: GET /feed/ with li_at â LinkedIn issues an authenticated JSESSIONID
             session.cookies.set("li_at", li_at, domain=".linkedin.com", path="/")
             try:
                 r1 = session.get("https://www.linkedin.com/feed/", timeout=30, allow_redirects=True)
@@ -75,7 +75,7 @@ class JobSearcher:
             except Exception as e:
                 log.warning(f"[HTTP] Feed request failed: {e}")
 
-            # Get JSESSIONID — prefer value from response cookies
+            # Get JSESSIONID â prefer value from response cookies
             jsessionid = (
                 session.cookies.get("JSESSIONID", domain="linkedin.com")
                 or session.cookies.get("JSESSIONID", domain=".linkedin.com")
@@ -86,7 +86,7 @@ class JobSearcher:
             log.info(f"[HTTP] CSRF: {csrf[:30] if csrf else 'EMPTY'} | all cookies: {list(session.cookies.keys())}")
 
             if not csrf:
-                log.warning("[HTTP] No JSESSIONID after session init — cannot call Voyager")
+                log.warning("[HTTP] No JSESSIONID after session init â cannot call Voyager")
                 return False
 
             # Ensure li_at is still set
@@ -119,7 +119,7 @@ class JobSearcher:
         """Search LinkedIn for Easy Apply jobs."""
         if self._http_session is None:
             if not self._init_http_session():
-                log.warning("[HTTP] Session init failed — trying public API")
+                log.warning("[HTTP] Session init failed â trying public API")
                 return self._strategy_public_api(title, location, max_results) or []
 
         jobs = self._strategy_voyager(title, location, max_results)
@@ -137,6 +137,7 @@ class JobSearcher:
     # -------------------------------------------------------------------------
     # Strategy 1: Voyager API via authenticated requests session
     # -------------------------------------------------------------------------
+
     def _strategy_voyager(self, title: str, location: str, max_results: int):
         """Call Voyager via Python requests (not from browser)."""
         try:
@@ -156,14 +157,12 @@ class JobSearcher:
             log.info(f"[HTTP] Voyager {resp.status_code} for '{title}'")
 
             if resp.status_code in (401, 403):
-                log.warning("[HTTP] Auth failure — li_at may be expired")
+                log.warning("[HTTP] Auth failure â li_at may be expired")
                 self._http_session = None
                 return None
-
             if resp.status_code == 429:
-                log.warning("[HTTP] Rate limited (429) — will try public API")
+                log.warning("[HTTP] Rate limited (429) â will try public API")
                 return None
-
             if not resp.ok:
                 log.warning(f"[HTTP] Error {resp.status_code}: {resp.text[:200]}")
                 return None
@@ -180,6 +179,7 @@ class JobSearcher:
     # -------------------------------------------------------------------------
     # Strategy 2: Public LinkedIn jobs API (no auth required)
     # -------------------------------------------------------------------------
+
     def _strategy_public_api(self, title: str, location: str, max_results: int):
         """
         LinkedIn's guest/public jobs search API.
@@ -187,7 +187,6 @@ class JobSearcher:
         """
         try:
             import requests as req_lib
-            from html.parser import HTMLParser
 
             params = {
                 "keywords": title,
@@ -225,11 +224,26 @@ class JobSearcher:
         import re
         jobs = []
         try:
-            # Each job card has data-entity-urn="urn:li:jobPosting:JOBID"
-            job_ids = re.findall(r'data-entity-urn="urn:li:jobPosting:(d+)"', html)
-            titles = re.findall(r'class="base-search-card__title"[^>]*>([^<]+)<', html)
-            companies = re.findall(r'class="base-search-card__subtitle"[^>]*>[sS]*?<a[^>]*>([^<]+)<', html)
-            locations = re.findall(r'class="job-search-card__location"[^>]*>([^<]+)<', html)
+            # Primary: data-entity-urn attribute (FIXED: was missing backslash â (d+) now (\d+))
+            job_ids = re.findall(r'data-entity-urn="urn:li:jobPosting:(\d+)"', html)
+
+            # Fallback 1: job ID embedded in view URL href
+            if not job_ids:
+                job_ids = re.findall(r'href="[^"]*linkedin\.com/jobs/view/(\d+)/', html)
+
+            # Fallback 2: data-job-id attribute
+            if not job_ids:
+                job_ids = re.findall(r'data-job-id="(\d+)"', html)
+
+            titles = re.findall(r'class="base-search-card__title"[^>]*>\s*([^<]+?)\s*<', html)
+
+            # FIXED: was [sS]*? (matched literal s/S chars), now [\s\S]*? (any char incl newline)
+            companies = re.findall(
+                r'class="base-search-card__subtitle"[^>]*>[\s\S]*?<a[^>]*>\s*([^<]+?)\s*<',
+                html
+            )
+
+            locations = re.findall(r'class="job-search-card__location"[^>]*>\s*([^<]+?)\s*<', html)
 
             log.info(f"[PUB] Found IDs: {len(job_ids)}, titles: {len(titles)}, companies: {len(companies)}")
 
@@ -240,10 +254,11 @@ class JobSearcher:
                     "location": locations[i].strip() if i < len(locations) else "",
                     "job_id": job_id,
                     "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
-                    "easy_apply": True,  # f_LF=f_AL filter ensures Easy Apply
+                    "easy_apply": True,   # f_LF=f_AL filter ensures Easy Apply
                 }
                 if job["title"] and self._passes_filters(job):
                     jobs.append(job)
+
         except Exception as e:
             log.warning(f"[PUB] HTML parse error: {e}")
         return jobs
@@ -257,23 +272,30 @@ class JobSearcher:
                 item_type = item.get("$type", "")
                 if "JobPosting" not in item_type and "jobPosting" not in item_type:
                     continue
+
                 title = item.get("title", "").strip()
                 if not title:
                     continue
+
                 apply_method = item.get("applyMethod", {})
                 if "OffsiteApply" in apply_method.get("$type", ""):
                     continue
+
                 urn = item.get("entityUrn", "")
                 job_id = urn.split(":")[-1] if urn else ""
+
                 company = ""
                 company_details = item.get("companyDetails", {})
                 if isinstance(company_details, dict):
                     company = (company_details.get("company", {}) or {}).get("name", "")
-                    if not company:
-                        company = company_details.get("companyName", "")
+                if not company:
+                    company = company_details.get("companyName", "")
+
                 location = item.get("formattedLocation", "") or item.get("location", "")
+
                 if not job_id:
                     continue
+
                 job = {
                     "title": title,
                     "company": company,
@@ -284,6 +306,7 @@ class JobSearcher:
                 }
                 if self._passes_filters(job):
                     jobs.append(job)
+
         except Exception as e:
             log.warning(f"[HTTP] Parse error: {e}")
         return jobs
@@ -300,6 +323,7 @@ class JobSearcher:
         try:
             self.page.goto(job["url"], wait_until="domcontentloaded", timeout=30000)
             time.sleep(random.uniform(1.5, 3.0))
+
             for sel in ["button[aria-label*='more']", ".jobs-description__footer-button", "button:text('Show more')"]:
                 try:
                     btn = self.page.query_selector(sel)
@@ -309,21 +333,36 @@ class JobSearcher:
                         break
                 except Exception:
                     continue
+
             desc_el = None
-            for sel in [".jobs-description-content__text", ".job-view-layout .jobs-box__html-content", ".jobs-description__content", "#job-details"]:
+            for sel in [
+                ".jobs-description-content__text",
+                ".job-view-layout .jobs-box__html-content",
+                ".jobs-description__content",
+                "#job-details",
+            ]:
                 desc_el = self.page.query_selector(sel)
                 if desc_el:
                     break
+
             description = (desc_el.inner_text() if desc_el else "").strip()
+
             salary_el = None
-            for sel in [".compensation-module__salary", "[class*='salary']", ".jobs-unified-top-card__salary-main-rail-badge"]:
+            for sel in [
+                ".compensation-module__salary",
+                "[class*='salary']",
+                ".jobs-unified-top-card__salary-main-rail-badge",
+            ]:
                 salary_el = self.page.query_selector(sel)
                 if salary_el:
                     break
+
             job["description"] = description
             job["salary_text"] = (salary_el.inner_text() if salary_el else "").strip()
+
         except Exception as e:
             log.debug(f"Could not fetch job details for {job.get('job_id')}: {e}")
             job["description"] = ""
             job["salary_text"] = ""
+
         return job
