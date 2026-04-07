@@ -92,8 +92,14 @@ class LinkedInLogin:
         }])
         self._page = context.new_page()
         try:
-            self._page.goto("https://www.linkedin.com/feed/", wait_until="networkidle", timeout=30000)
-            time.sleep(random.uniform(2.0, 3.5))
+            # Use domcontentloaded — networkidle never fires on datacenter IPs
+            # due to LinkedIn's endless background polling
+            self._page.goto(
+                "https://www.linkedin.com/feed/",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            time.sleep(random.uniform(3.0, 5.0))
             url = self._page.url
             if "feed" in url or "jobs" in url or "mynetwork" in url:
                 log.info(f"Cookie login successful. URL: {url}")
@@ -102,7 +108,8 @@ class LinkedInLogin:
                 log.error(f"Cookie login failed — cookie may be expired. URL: {url}")
                 return None
             else:
-                log.info(f"Cookie login — landed at: {url}")
+                # Any other page after injecting cookie — likely still logged in
+                log.info(f"Cookie login — landed at: {url}, treating as success")
                 return self._page
         except Exception as e:
             log.error(f"Cookie login error: {e}")
@@ -113,7 +120,11 @@ class LinkedInLogin:
         context = self._make_context()
         self._page = context.new_page()
         try:
-            self._page.goto("https://www.linkedin.com/login", wait_until="networkidle", timeout=30000)
+            self._page.goto(
+                "https://www.linkedin.com/login",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
             time.sleep(random.uniform(1.5, 3.0))
             self._page.fill("#username", email)
             time.sleep(random.uniform(0.5, 1.2))
@@ -122,7 +133,7 @@ class LinkedInLogin:
             self._page.fill("#password", password)
             time.sleep(random.uniform(0.8, 1.5))
             self._page.click('[data-litms-control-urn="login-submit"]')
-            self._page.wait_for_load_state("networkidle", timeout=30000)
+            self._page.wait_for_load_state("domcontentloaded", timeout=60000)
             time.sleep(random.uniform(2.0, 4.0))
             current_url = self._page.url
             if "feed" in current_url or "mynetwork" in current_url or "jobs" in current_url:
