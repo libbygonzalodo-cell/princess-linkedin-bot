@@ -1,6 +1,5 @@
 """
-LinkedIn Login Handler — supports cookie auth (preferred) and email/password fallback
-Cookie auth bypasses LinkedIn's security challenges on datacenter IPs (GitHub Actions).
+LinkedIn Login Handler — cookie auth (preferred) with warm-up visit, or email/password fallback.
 """
 import os
 import time
@@ -79,44 +78,71 @@ class LinkedInLogin:
         return self._password_login(email, password)
 
     def _cookie_login(self, li_at: str) -> Page | None:
-        """Inject li_at session cookie — bypasses security challenges."""
+        """
+        Two-step cookie injection:
+        1. Warm-up visit to linkedin.com to establish bcookie/bscookie
+        2. Inject li_at, then navigate to feed
+        """
         context = self._make_context()
-        context.add_cookies([{
-            "name": "li_at",
-            "value": li_at,
-            "domain": ".linkedin.com",
-            "path": "/",
-            "httpOnly": True,
-            "secure": True,
-            "sameSite": "None",
-        }])
         self._page = context.new_page()
         try:
-            # Use domcontentloaded — networkidle never fires on datacenter IPs
-            # due to LinkedIn's endless background polling
+            # Step 1: warm-up — lets LinkedIn set bcookie, bscookie, and other
+            # browser-identity cookies that must exist alongside li_at
+            log.info("Cookie login: warm-up visit to linkedin.com...")
             self._page.goto(
-                "https://www.linkedin.com/feed/",
+                "https://www.linkedin.com/",
                 wait_until="domcontentloaded",
                 timeout=60000,
             )
+            time.sleep(random.uniform(1.5, 2.5))
+
+            # Step 2: inject the session cookie into the established context
+            context.add_cookies([{
+                "name": "li_at",
+                "value": li_at,
+                "domain": ".linkedin.com",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+            }])
+
+            # Step 3: navigate to feed
+            log.info("Cookie login: navigating to feed...")
+            try:
+                self._page.goto(
+                    "https://www.linkedin.com/feed/",
+                    wait_until="domcontentloaded",
+                    timeout=60000,
+                )
+            except Exception as nav_err:
+                err_str = str(nav_err)
+                if "ERR_TOO_MANY_REDIRECTS" in err_str:
+                    log.error(
+                        "Cookie rejected (redirect loop). "
+                        "The li_at cookie may be expired — update LINKEDIN_COOKIE secret."
+                    )
+                else:
+                    log.error(f"Navigation error: {nav_err}")
+                return None
+
             time.sleep(random.uniform(3.0, 5.0))
             url = self._page.url
             if "feed" in url or "jobs" in url or "mynetwork" in url:
                 log.info(f"Cookie login successful. URL: {url}")
                 return self._page
             elif "login" in url or "checkpoint" in url or "challenge" in url:
-                log.error(f"Cookie login failed — cookie may be expired. URL: {url}")
+                log.error(f"Cookie login failed — landed on auth page: {url}")
                 return None
             else:
-                # Any other page after injecting cookie — likely still logged in
-                log.info(f"Cookie login — landed at: {url}, treating as success")
+                log.info(f"Cookie login — URL: {url}, treating as success")
                 return self._page
+
         except Exception as e:
             log.error(f"Cookie login error: {e}")
             return None
 
     def _password_login(self, email: str, password: str) -> Page | None:
-        """Fallback: email/password login (may trigger security challenge on new IPs)."""
+        """Fallback: email/password (may trigger security challenge on datacenter IPs)."""
         context = self._make_context()
         self._page = context.new_page()
         try:
@@ -140,7 +166,7 @@ class LinkedInLogin:
                 log.info(f"Login successful. URL: {current_url}")
                 return self._page
             elif "checkpoint" in current_url or "challenge" in current_url:
-                log.error("LinkedIn security challenge detected. Manual intervention required.")
+                log.error("LinkedIn security challenge detected.")
                 return None
             elif "login" in current_url:
                 log.error("Still on login page. Credentials may be wrong.")
